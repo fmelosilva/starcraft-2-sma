@@ -11,4 +11,4 @@ class WorkerRushBot(sc2.BotAI):
 run_game(maps.get("AcropolisLE"), [
     Bot(Race.Terran, WorkerRushBot()),
     Computer(Race.Protoss, Difficulty.Medium)
-], realtime=True)
+], realtime=False)
