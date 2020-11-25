@@ -25,23 +25,40 @@ class MyBot(sc2.BotAI):
         await self.train_BC()
         await self.BC_attack()
         await self.expand()
+        await self.reactive_depot()
                 
 
     async def build_workers(self):
         ccs: Units = self.townhalls(UnitTypeId.COMMANDCENTER)
         if not ccs:
             return
-        else:
-            cc: Unit = ccs.first
-        if self.can_afford(UnitTypeId.SCV) and self.workers.amount < 20 and cc.is_idle:
-            self.do(cc.train(UnitTypeId.SCV))
+        for cc in ccs: 
+            if self.can_afford(UnitTypeId.SCV) and self.workers.amount < 20 and cc.is_idle:
+                self.do(cc.train(UnitTypeId.SCV))
 
     async def build_depots(self):
         ccs: Units = self.townhalls(UnitTypeId.COMMANDCENTER)
         if not ccs:
             return
         else:
-            cc: Unit = ccs.first      
+            cc: Unit = ccs.first
+
+        if self.can_afford(UnitTypeId.SUPPLYDEPOT) and self.already_pending(UnitTypeId.SUPPLYDEPOT) == 0:
+            depot_placement_positions = self.main_base_ramp.corner_depots | {self.main_base_ramp.depot_in_middle}
+            depots: Units = self.structures.of_type({UnitTypeId.SUPPLYDEPOT, UnitTypeId.SUPPLYDEPOTLOWERED})
+            if depots:
+                depot_placement_positions: Set[Point2] = {
+                    d for d in depot_placement_positions if depots.closest_distance_to(d) > 1
+                }
+            if len(depot_placement_positions) == 0:
+                return
+            # Choose any depot location
+            target_depot_location: Point2 = depot_placement_positions.pop()
+            workers: Units = self.workers.gathering
+            if workers:  # if workers were found
+                worker: Unit = workers.random
+                self.do(worker.build(UnitTypeId.SUPPLYDEPOT, target_depot_location))
+
         if self.supply_left < 6 and self.supply_used >= 14 and not self.already_pending(UnitTypeId.SUPPLYDEPOT):
             if self.can_afford(UnitTypeId.SUPPLYDEPOT):
                 await self.build(UnitTypeId.SUPPLYDEPOT, near=cc.position.towards(self.game_info.map_center, 8)) 
@@ -80,13 +97,13 @@ class MyBot(sc2.BotAI):
 
     async def build_base_army(self):
         if self.structures(UnitTypeId.BARRACKS) and self.can_afford(UnitTypeId.MARINE) and self.supply_army < 30 and not self.already_pending(UnitTypeId.MARINE):
-            self.train(UnitTypeId.MARINE, 1)
+            self.train(UnitTypeId.MARINE, 4, closest_to = self.game_info.map_center)
 
     async def expand(self):
         if self.minerals < 1000 and self.vespene < 500:
             location = await self.get_next_expansion()
             await self.build(UnitTypeId.COMMANDCENTER, near=location, max_distance=10, random_alternative=False, placement_step=1)
-
+                
     async def build_engineering_bay(self):
         ccs: Units = self.townhalls(UnitTypeId.COMMANDCENTER)
         if not ccs:
@@ -180,6 +197,22 @@ class MyBot(sc2.BotAI):
                 # Order the BC to move to the target, and once the select_target returns an attack-target, change it to attack-move
                 elif bc.is_idle:
                     bc.move(target)
+
+    async def reactive_depot(self):
+        for depo in self.structures(UnitTypeId.SUPPLYDEPOT).ready:
+            for unit in self.enemy_units:
+                if unit.distance_to(depo) < 15:
+                    break
+            else:
+                depo(AbilityId.MORPH_SUPPLYDEPOT_LOWER)
+
+        # Lower depos when no enemies are nearby
+        for depo in self.structures(UnitTypeId.SUPPLYDEPOTLOWERED).ready:
+            for unit in self.enemy_units:
+                if unit.distance_to(depo) < 10:
+                    depo(AbilityId.MORPH_SUPPLYDEPOT_RAISE)
+                    break
+
 def main():
     map = "AcropolisLE"
     sc2.run_game(
