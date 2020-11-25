@@ -9,6 +9,6 @@ class WorkerRushBot(sc2.BotAI):
                 worker.attack(self.enemy_start_locations[0])
 
 run_game(maps.get("AcropolisLE"), [
-    Bot(Race.Zerg, WorkerRushBot()),
+    Bot(Race.Terran, WorkerRushBot()),
     Computer(Race.Protoss, Difficulty.Medium)
 ], realtime=True)
