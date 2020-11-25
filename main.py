@@ -7,6 +7,8 @@ from sc2.position import Point2, Point3
 from sc2.unit import Unit
 from sc2.units import Units
 
+from typing import Tuple, List
+
 class MyBot(sc2.BotAI):
     async def on_step(self, iteration):
         await self.distribute_workers()
@@ -18,9 +20,12 @@ class MyBot(sc2.BotAI):
         await self.build_engineering_bay()
         await self.build_factory()
         await self.build_starport()
+        await self.build_starport_techlab()
         await self.build_fusion_core()
         await self.train_BC()
+        await self.BC_attack()
         await self.expand()
+                
 
     async def build_workers(self):
         ccs: Units = self.townhalls(UnitTypeId.COMMANDCENTER)
@@ -120,8 +125,61 @@ class MyBot(sc2.BotAI):
             await self.build(UnitTypeId.FUSIONCORE, near=cc.position.towards(self.game_info.map_center, 8))
 
     async def train_BC(self):
-        if self.structures(UnitTypeId.FUSIONCORE) and self.can_afford(UnitTypeId.BATTLECRUISER) and self.supply_army < 60 and not self.already_pending(UnitTypeId.BATTLECRUISER):
-            self.train(UnitTypeId.BATTLECRUISER, 1)
+        for sp in self.structures(UnitTypeId.STARPORT).idle:
+                if sp.has_add_on:
+                    if not self.can_afford(UnitTypeId.BATTLECRUISER):
+                        break
+                    sp.train(UnitTypeId.BATTLECRUISER)
+        
+    async def starport_points_to_build_addon(self,sp_position: Point2) -> List[Point2]:
+            """ Return all points that need to be checked when trying to build an addon. Returns 4 points. """
+            addon_offset: Point2 = Point2((2.5, -0.5))
+            addon_position: Point2 = sp_position + addon_offset
+            addon_points = [
+                (addon_position + Point2((x - 0.5, y - 0.5))).rounded for x in range(0, 2) for y in range(0, 2)
+            ]
+            return addon_points
+    
+    async def build_starport_techlab(self):
+        sp: Unit
+        for sp in self.structures(UnitTypeId.STARPORT).ready.idle:
+            if not sp.has_add_on and self.can_afford(UnitTypeId.STARPORTTECHLAB):
+                addon_points = await self.starport_points_to_build_addon(sp.position)
+                if all(
+                    self.in_map_bounds(addon_point)
+                    and self.in_placement_grid(addon_point)
+                    and self.in_pathing_grid(addon_point)
+                    for addon_point in addon_points
+                ):
+                    sp.build(UnitTypeId.STARPORTTECHLAB)
+
+    async def select_target(self) -> Tuple[Point2, bool]:
+        """ Select an enemy target the units should attack. """
+        targets: Units = self.enemy_structures
+        if targets:
+            return targets.random.position, True
+
+        targets: Units = self.enemy_units
+        if targets:
+            return targets.random.position, True
+
+        if self.units and min([u.position.distance_to(self.enemy_start_locations[0]) for u in self.units]) < 5:
+            return self.enemy_start_locations[0].position, False
+
+        return self.mineral_field.random.position, False
+
+    async def BC_attack(self):
+        bcs: Units = self.units(UnitTypeId.BATTLECRUISER)
+        if bcs:
+            target, target_is_enemy_unit = await self.select_target()
+            bc: Unit
+            for bc in bcs:
+                # Order the BC to attack-move the target
+                if target_is_enemy_unit and (bc.is_idle or bc.is_moving):
+                    bc.attack(target)
+                # Order the BC to move to the target, and once the select_target returns an attack-target, change it to attack-move
+                elif bc.is_idle:
+                    bc.move(target)
 def main():
     map = "AcropolisLE"
     sc2.run_game(
