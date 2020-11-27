@@ -6,11 +6,16 @@ from sc2.constants import *
 from sc2.position import Point2, Point3
 from sc2.unit import Unit
 from sc2.units import Units
-
+import random
 from typing import Tuple, List
 
 class MyBot(sc2.BotAI):
+    def __init__(self):
+        self.MAX_WORKERS = 65
+        self.ITERATIONS_PER_MINUTE = 165
+
     async def on_step(self, iteration):
+        self.iteration = iteration
         await self.distribute_workers()
         await self.build_workers()
         await self.build_depots()
@@ -24,17 +29,16 @@ class MyBot(sc2.BotAI):
         await self.build_fusion_core()
         await self.train_BC()
         await self.BC_attack()
+        await self.army_atack()
         await self.expand()
         await self.reactive_depot()
                 
-
     async def build_workers(self):
-        ccs: Units = self.townhalls(UnitTypeId.COMMANDCENTER)
-        if not ccs:
-            return
-        for cc in ccs: 
-            if self.can_afford(UnitTypeId.SCV) and self.workers.amount < 20 and cc.is_idle:
-                self.do(cc.train(UnitTypeId.SCV))
+        if len(self.townhalls(UnitTypeId.COMMANDCENTER))*16 > len(self.units(SCV)):
+            if len(self.units(SCV)) < self.MAX_WORKERS:
+                for cc in self.townhalls(UnitTypeId.COMMANDCENTER):
+                    if self.can_afford(UnitTypeId.SCV) and cc.is_idle:
+                        self.do(cc.train(UnitTypeId.SCV))
 
     async def build_depots(self):
         ccs: Units = self.townhalls(UnitTypeId.COMMANDCENTER)
@@ -64,22 +68,18 @@ class MyBot(sc2.BotAI):
                 await self.build(UnitTypeId.SUPPLYDEPOT, near=cc.position.towards(self.game_info.map_center, 8)) 
     
     async def build_refinary(self):
-        ccs: Units = self.townhalls(UnitTypeId.COMMANDCENTER)
-        if not ccs:
-            return
-        else:
-            cc: Unit = ccs.first
-        if self.gas_buildings.amount < 2 and self.can_afford(UnitTypeId.REFINERY):
-            vgs: Units = self.vespene_geyser.closer_than(20, cc)
-            for vg in vgs:
-                if self.gas_buildings.filter(lambda unit: unit.distance_to(vg) < 1):
-                    break
-                worker: Unit = self.select_build_worker(vg.position)
-                if worker is None: 
-                    break
+        for cc in self.townhalls(UnitTypeId.COMMANDCENTER):
+            if self.gas_buildings.amount < 2*len(self.townhalls(UnitTypeId.COMMANDCENTER)) and self.can_afford(UnitTypeId.REFINERY):
+                vgs: Units = self.vespene_geyser.closer_than(20, cc)
+                for vg in vgs:
+                    if self.gas_buildings.filter(lambda unit: unit.distance_to(vg) < 1):
+                        break
+                    worker: Unit = self.select_build_worker(vg.position)
+                    if worker is None: 
+                        break
 
-                worker.build(UnitTypeId.REFINERY, vg)
-                break
+                    worker.build(UnitTypeId.REFINERY, vg)
+                    break
         for refinery in self.gas_buildings:
             if refinery.assigned_harvesters < refinery.ideal_harvesters:
                 worker: Units = self.workers.closer_than(10, refinery)
@@ -96,14 +96,21 @@ class MyBot(sc2.BotAI):
             await self.build(UnitTypeId.BARRACKS, near=cc.position.towards(self.game_info.map_center, 8))
 
     async def build_base_army(self):
-        if self.structures(UnitTypeId.BARRACKS) and self.can_afford(UnitTypeId.MARINE) and self.supply_army < 30 and not self.already_pending(UnitTypeId.MARINE):
-            self.train(UnitTypeId.MARINE, 4, closest_to = self.game_info.map_center)
+        for barrack in self.structures(UnitTypeId.BARRACKS):
+            if  self.can_afford(UnitTypeId.MARINE) and self.supply_army < 30 and not self.already_pending(UnitTypeId.MARINE):
+                self.train(UnitTypeId.MARINE, 1)
+        for factory in self.structures(UnitTypeId.FACTORY):
+            if  self.can_afford(UnitTypeId.HELLION) and self.supply_army < 60 and not self.already_pending(UnitTypeId.HELLION):
+                self.train(UnitTypeId.HELLION, 1)
 
     async def expand(self):
-        if self.minerals < 1000 and self.vespene < 500:
+        if self.townhalls(UnitTypeId.COMMANDCENTER).amount < (self.iteration/self.ITERATIONS_PER_MINUTE)/5 and self.can_afford(UnitTypeId.COMMANDCENTER):
             location = await self.get_next_expansion()
-            await self.build(UnitTypeId.COMMANDCENTER, near=location, max_distance=10, random_alternative=False, placement_step=1)
-                
+            workers: Units = self.workers.gathering
+            if workers:  # if workers were found
+                worker: Unit = workers.random
+                self.do(worker.build(UnitTypeId.COMMANDCENTER, location))
+
     async def build_engineering_bay(self):
         ccs: Units = self.townhalls(UnitTypeId.COMMANDCENTER)
         if not ccs:
@@ -213,11 +220,51 @@ class MyBot(sc2.BotAI):
                     depo(AbilityId.MORPH_SUPPLYDEPOT_RAISE)
                     break
 
+    def select_army_target(self,state):
+        if len(self.enemy_units) > 0:
+            return random.choice(self.enemy_units)
+
+        elif len(self.enemy_structures) > 0:
+            return random.choice(self.enemy_structures)
+
+        else: 
+            self.enemy_start_locations[0]
+
+    async def army_atack(self):
+        # if self.units(MARINE).amount > 30 or self.units(HELLION).amount > 30:
+        #     for m in self.units(MARINE).idle:
+        #             self.do(m.attack(select_army_target(self.state)))
+        #     for h in self.units(HELLION):
+        #         self.do(h.attack(select_army_target(self.state)))
+
+        # elif self.units(MARINE).amount > 3 or self.units(HELLION).amount > 3:
+        #     if self.enemy_units:
+        #         for m in self.units(MARINE).idle:
+        #               self.do(m.attack(random.choice(self.enemy_units)))
+
+        #         for h in self.units(HELLION):
+        #             self.do(h.attack(random.choice(self.enemy_units)))
+
+        aggressive_units = {MARINE: [15, 5],
+                            HELLION: [8, 3]}
+
+
+        for UNIT in aggressive_units:
+            if self.units(UNIT).amount > aggressive_units[UNIT][0] and self.units(UNIT).amount > aggressive_units[UNIT][1]:
+                for s in self.units(UNIT).idle:
+                    await self.do(s.attack(self.find_target(self.state)))
+
+            elif self.units(UNIT).amount > aggressive_units[UNIT][1]:
+                if len(self.enemy_units) > 0:
+                    for s in self.units(UNIT).idle:
+                        self.do(s.attack(random.choice(self.enemy_units)))
+
+        
 def main():
     map = "AcropolisLE"
     sc2.run_game(
         sc2.maps.get(map),
-        [Bot(Race.Terran, MyBot()), Computer(Race.Zerg, Difficulty.Easy)],
+        [Bot(Race.Terran, MyBot()), Computer(Race.Zerg, Difficulty.Medium)],
         realtime=False,
     )
 
