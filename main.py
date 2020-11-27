@@ -252,7 +252,7 @@ class MyBot(sc2.BotAI):
         for UNIT in aggressive_units:
             if self.units(UNIT).amount > aggressive_units[UNIT][0] and self.units(UNIT).amount > aggressive_units[UNIT][1]:
                 for s in self.units(UNIT).idle:
-                    await self.do(s.attack(self.find_target(self.state)))
+                    self.do(s.attack(self.select_army_target(self.state)))
 
             elif self.units(UNIT).amount > aggressive_units[UNIT][1]:
                 if len(self.enemy_units) > 0:
@@ -264,7 +264,7 @@ def main():
     map = "AcropolisLE"
     sc2.run_game(
         sc2.maps.get(map),
-        [Bot(Race.Terran, MyBot()), Computer(Race.Zerg, Difficulty.Medium)],
+        [Bot(Race.Terran, MyBot()), Computer(Race.Zerg, Difficulty.Easy)],
         realtime=False,
     )
 
