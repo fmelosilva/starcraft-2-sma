@@ -10,6 +10,7 @@ from sc2.units import Units
 from sc2.ids.upgrade_id import UpgradeId
 from sc2.ids.unit_typeid import UnitTypeId
 
+import random
 from typing import Tuple, List
 from task import Task
 from trigger_event import TriggerEvent
@@ -36,8 +37,11 @@ class MyBot(sc2.BotAI):
         self.global_queue = [] 
         self.global_events = {}
         self.start()
+        self.MAX_WORKERS = 65
+        self.ITERATIONS_PER_MINUTE = 165
 
     async def on_step(self, iteration):
+        self.iteration = iteration
         await self.distribute_workers()
         await self.build_workers()
         await self.build_depots()
@@ -51,6 +55,7 @@ class MyBot(sc2.BotAI):
         await self.build_fusion_core()
         await self.train_BC()
         await self.BC_attack()
+        await self.army_atack()
         await self.expand()
         await self.reactive_depot()
         self.detect_changes()
@@ -68,17 +73,17 @@ class MyBot(sc2.BotAI):
         ):
             worker.build(UnitTypeId.BARRACKS, barracks_placement_position)
 
+                
     async def build_workers(self):
-        ccs: Units = self.townhalls(UnitTypeId.COMMANDCENTER)
-        if not ccs:
-            return
-        for cc in ccs:
-            if (
-                self.can_afford(UnitTypeId.SCV)
-                and self.workers.amount < 20
-                and cc.is_idle
-            ):
-                self.do(cc.train(UnitTypeId.SCV))
+        #print(f"numero de fabricas {self.structures(UnitTypeId.FACTORY)}")
+        print(f"numero de estaleiro sideral lista {self.structures(UnitTypeId.STARPORT)}")
+        print(f"numero de estaleiro sideral {len(self.structures(UnitTypeId.STARPORT))}")
+
+        if len(self.townhalls(UnitTypeId.COMMANDCENTER))*16 > len(self.units(SCV)):
+            if len(self.units(UnitTypeId.SCV)) < self.MAX_WORKERS:
+                for cc in self.townhalls(UnitTypeId.COMMANDCENTER):
+                    if self.can_afford(UnitTypeId.SCV) and cc.is_idle:
+                        self.do(cc.train(UnitTypeId.SCV))
 
     async def build_depots(self):
         ccs: Units = self.townhalls(UnitTypeId.COMMANDCENTER)
@@ -87,30 +92,23 @@ class MyBot(sc2.BotAI):
         else:
             cc: Unit = ccs.first
 
-        if (
-            self.can_afford(UnitTypeId.SUPPLYDEPOT)
-            and self.already_pending(UnitTypeId.SUPPLYDEPOT) == 0
-        ):
-            depot_placement_positions = self.main_base_ramp.corner_depots | {
-                self.main_base_ramp.depot_in_middle
-            }
-            depots: Units = self.structures.of_type(
-                {UnitTypeId.SUPPLYDEPOT, UnitTypeId.SUPPLYDEPOTLOWERED}
-            )
+        if self.can_afford(UnitTypeId.SUPPLYDEPOT) and len(self.structures.of_type({UnitTypeId.SUPPLYDEPOT, UnitTypeId.SUPPLYDEPOTLOWERED})) < 3 and not self.already_pending(UnitTypeId.SUPPLYDEPOT):
+            depot_placement_positions = self.main_base_ramp.corner_depots | {self.main_base_ramp.depot_in_middle}
+            depots: Units = self.structures.of_type({UnitTypeId.SUPPLYDEPOT, UnitTypeId.SUPPLYDEPOTLOWERED})
             if depots:
                 depot_placement_positions: Set[Point2] = {
                     d
                     for d in depot_placement_positions
                     if depots.closest_distance_to(d) > 1
                 }
-            if len(depot_placement_positions) == 0:
-                return
-            # Choose any depot location
-            target_depot_location: Point2 = depot_placement_positions.pop()
-            workers: Units = self.workers.gathering
-            if workers:  # if workers were found
-                worker: Unit = workers.random
-                self.do(worker.build(UnitTypeId.SUPPLYDEPOT, target_depot_location))
+                if len(depot_placement_positions) == 0:
+                    return
+                # Choose any depot location
+                target_depot_location: Point2 = depot_placement_positions.pop()
+                workers: Units = self.workers.gathering
+                if workers:  # if workers were found
+                    worker: Unit = workers.random
+                    self.do(worker.build(UnitTypeId.SUPPLYDEPOT, target_depot_location))
 
         if (
             self.supply_left < 6
@@ -118,29 +116,26 @@ class MyBot(sc2.BotAI):
             and not self.already_pending(UnitTypeId.SUPPLYDEPOT)
         ):
             if self.can_afford(UnitTypeId.SUPPLYDEPOT):
-                await self.build(
-                    UnitTypeId.SUPPLYDEPOT,
-                    near=cc.position.towards(self.game_info.map_center, 8),
-                    placement_step=4
-                )
-
+                workers: Units = self.workers.gathering
+                if workers:  # if workers were found
+                    worker: Unit = workers.random
+                    depot_placement_positions = self.main_base_ramp.depot_in_middle
+                    depot_position = await self.find_placement(UnitTypeId.SUPPLYDEPOT, near=depot_placement_positions)
+                    self.do(worker.build(UnitTypeId.SUPPLYDEPOT, depot_position))
+    
     async def build_refinary(self):
-        ccs: Units = self.townhalls(UnitTypeId.COMMANDCENTER)
-        if not ccs:
-            return
-        else:
-            cc: Unit = ccs.first
-        if self.gas_buildings.amount < 2 and self.can_afford(UnitTypeId.REFINERY):
-            vgs: Units = self.vespene_geyser.closer_than(20, cc)
-            for vg in vgs:
-                if self.gas_buildings.filter(lambda unit: unit.distance_to(vg) < 1):
-                    break
-                worker: Unit = self.select_build_worker(vg.position)
-                if worker is None:
-                    break
+        for cc in self.townhalls(UnitTypeId.COMMANDCENTER):
+            if self.gas_buildings.amount < 2*len(self.townhalls(UnitTypeId.COMMANDCENTER)) and self.can_afford(UnitTypeId.REFINERY):
+                vgs: Units = self.vespene_geyser.closer_than(20, cc)
+                for vg in vgs:
+                    if self.gas_buildings.filter(lambda unit: unit.distance_to(vg) < 1):
+                        break
+                    worker: Unit = self.select_build_worker(vg.position)
+                    if worker is None: 
+                        break
 
-                worker.build(UnitTypeId.REFINERY, vg)
-                break
+                    worker.build(UnitTypeId.REFINERY, vg)
+                    break
         for refinery in self.gas_buildings:
             if refinery.assigned_harvesters < refinery.ideal_harvesters:
                 worker: Units = self.workers.closer_than(10, refinery)
@@ -153,34 +148,24 @@ class MyBot(sc2.BotAI):
             return
         else:
             cc: Unit = ccs.first
-        if not self.structures(UnitTypeId.BARRACKS) and self.can_afford(
-            UnitTypeId.BARRACKS
-        ):
-            await self.build(
-                UnitTypeId.BARRACKS,
-                near=cc.position.towards(self.game_info.map_center, 8),
-                placement_step=5
-            )
+        if not self.structures(UnitTypeId.BARRACKS) and self.can_afford(UnitTypeId.BARRACKS):
+            await self.build(UnitTypeId.BARRACKS, near=cc.position.towards(self.game_info.map_center, 8), placement_step=5)
 
     async def build_base_army(self):
-        if (
-            self.structures(UnitTypeId.BARRACKS)
-            and self.can_afford(UnitTypeId.MARINE)
-            and self.supply_army < 30
-            and not self.already_pending(UnitTypeId.MARINE)
-        ):
-            self.train(UnitTypeId.MARINE, 4, closest_to=self.game_info.map_center)
+        for barrack in self.structures(UnitTypeId.BARRACKS):
+            if  self.can_afford(UnitTypeId.MARINE) and self.supply_army < 10 and not self.already_pending(UnitTypeId.MARINE) and barrack.is_idle:
+                self.train(UnitTypeId.MARINE, 1)
+        for factory in self.structures(UnitTypeId.FACTORY):
+            if  self.can_afford(UnitTypeId.HELLION) and self.supply_army < 20 and not self.already_pending(UnitTypeId.HELLION):
+                self.train(UnitTypeId.HELLION, 1)
 
     async def expand(self):
-        if self.minerals < 1000 and self.vespene < 500:
+        if self.townhalls(UnitTypeId.COMMANDCENTER).amount < (self.iteration/self.ITERATIONS_PER_MINUTE)/5 and self.can_afford(UnitTypeId.COMMANDCENTER):
             location = await self.get_next_expansion()
-            await self.build(
-                UnitTypeId.COMMANDCENTER,
-                near=location,
-                max_distance=10,
-                random_alternative=False,
-                placement_step=5,
-            )
+            workers: Units = self.workers.gathering
+            if workers:  # if workers were found
+                worker: Unit = workers.random
+                self.do(worker.build(UnitTypeId.COMMANDCENTER, location))
 
     async def build_engineering_bay(self):
         ccs: Units = self.townhalls(UnitTypeId.COMMANDCENTER)
@@ -188,14 +173,8 @@ class MyBot(sc2.BotAI):
             return
         else:
             cc: Unit = ccs.first
-        if self.can_afford(UnitTypeId.ENGINEERINGBAY) and not self.structures(
-            UnitTypeId.ENGINEERINGBAY
-        ):
-            await self.build(
-                UnitTypeId.ENGINEERINGBAY,
-                near=cc.position.towards(self.game_info.map_center, 8),
-                placement_step=5
-            )
+        if self.can_afford(UnitTypeId.ENGINEERINGBAY) and not self.structures(UnitTypeId.ENGINEERINGBAY) :
+            await self.build(UnitTypeId.ENGINEERINGBAY, near=cc.position.towards(self.game_info.map_center, 8), placement_step=5)
 
     async def build_factory(self):
         ccs: Units = self.townhalls(UnitTypeId.COMMANDCENTER)
@@ -203,11 +182,7 @@ class MyBot(sc2.BotAI):
             return
         else:
             cc: Unit = ccs.first
-        if (
-            self.structures(UnitTypeId.BARRACKS)
-            and not self.structures(UnitTypeId.FACTORY)
-            and self.can_afford(UnitTypeId.FACTORY)
-        ):
+        if self.structures(UnitTypeId.BARRACKS) and not self.structures(UnitTypeId.FACTORY) and self.can_afford(UnitTypeId.FACTORY) and not self.already_pending(UnitTypeId.FACTORY):
             await self.build(
                 UnitTypeId.FACTORY,
                 near=cc.position.towards(self.game_info.map_center, 8),
@@ -220,16 +195,8 @@ class MyBot(sc2.BotAI):
             return
         else:
             cc: Unit = ccs.first
-        if (
-            self.structures(UnitTypeId.FACTORY)
-            and not self.structures(UnitTypeId.STARPORT)
-            and self.can_afford(UnitTypeId.STARPORT)
-        ):
-            await self.build(
-                UnitTypeId.STARPORT,
-                near=cc.position.towards(self.game_info.map_center, 8),
-                placement_step=5
-            )
+        if self.structures(UnitTypeId.FACTORY) and len(self.structures(UnitTypeId.STARPORT)) < 2 and self.can_afford(UnitTypeId.STARPORT) and not self.already_pending(UnitTypeId.STARPORT):
+            await self.build(UnitTypeId.STARPORT, near=cc.position.towards(self.game_info.map_center, 8), placement_step=5)
 
     async def build_fusion_core(self):
         ccs: Units = self.townhalls(UnitTypeId.COMMANDCENTER)
@@ -237,17 +204,9 @@ class MyBot(sc2.BotAI):
             return
         else:
             cc: Unit = ccs.first
-
-        if (
-            self.structures(UnitTypeId.STARPORT)
-            and not self.structures(UnitTypeId.FUSIONCORE)
-            and self.can_afford(UnitTypeId.FUSIONCORE)
-        ):
-            await self.build(
-                UnitTypeId.FUSIONCORE,
-                near=cc.position.towards(self.game_info.map_center, 8),
-                placement_step=5
-            )
+        
+        if self.structures(UnitTypeId.STARPORT) and not self.structures(UnitTypeId.FUSIONCORE) and self.can_afford(UnitTypeId.FUSIONCORE) and not self.already_pending(UnitTypeId.FUSIONCORE):
+            await self.build(UnitTypeId.FUSIONCORE, near=cc.position.towards(self.game_info.map_center, 8), placement_step=5)
 
     async def train_BC(self):
         for sp in self.structures(UnitTypeId.STARPORT).idle:
@@ -471,11 +430,36 @@ class MyBot(sc2.BotAI):
                         )
 
 
+    def select_army_target(self,state):
+        if len(self.enemy_units) > 0:
+            return random.choice(self.enemy_units)
+
+        elif len(self.enemy_structures) > 0:
+            return random.choice(self.enemy_structures)
+
+        else: 
+            self.enemy_start_locations[0]
+
+    async def army_atack(self):
+        aggressive_units = {UnitTypeId.MARINE: [50, 5],
+                            UnitTypeId.HELLION: [50, 3]}
+
+        for UNIT in aggressive_units:
+            if self.units(UNIT).amount > aggressive_units[UNIT][0] and self.units(UNIT).amount > aggressive_units[UNIT][1]:
+                for s in self.units(UNIT).idle:
+                    self.do(s.attack(self.select_army_target(self.state)))
+
+            elif self.units(UNIT).amount > aggressive_units[UNIT][1]:
+                if len(self.enemy_units) > 0:
+                    for s in self.units(UNIT).idle:
+                        self.do(s.attack(random.choice(self.enemy_units)))
+
+            
 def main():
     map = "AcropolisLE"
     sc2.run_game(
         sc2.maps.get(map),
-        [Bot(Race.Terran, MyBot()), Computer(Race.Zerg, Difficulty.Easy)],
+        [Bot(Race.Terran, MyBot()), Computer(Race.Protoss, Difficulty.VeryHard)],
         realtime=False,
     )
 
