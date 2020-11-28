@@ -34,7 +34,6 @@ class MyBot(sc2.BotAI):
         await self.army_atack()
         await self.expand()
         await self.reactive_depot()
-        await self.scout()
                 
     async def build_workers(self):
         if len(self.townhalls(UnitTypeId.COMMANDCENTER))*16 > len(self.units(SCV)):
@@ -101,7 +100,7 @@ class MyBot(sc2.BotAI):
         else:
             cc: Unit = ccs.first
         if not self.structures(UnitTypeId.BARRACKS) and self.can_afford(UnitTypeId.BARRACKS):
-            await self.build(UnitTypeId.BARRACKS, near=cc.position.towards(self.game_info.map_center, 8))
+            await self.build(UnitTypeId.BARRACKS, near=cc.position.towards(self.game_info.map_center, 8), placement_step=5)
 
     async def build_base_army(self):
         for barrack in self.structures(UnitTypeId.BARRACKS):
@@ -126,7 +125,7 @@ class MyBot(sc2.BotAI):
         else:
             cc: Unit = ccs.first
         if self.can_afford(UnitTypeId.ENGINEERINGBAY) and not self.structures(UnitTypeId.ENGINEERINGBAY) :
-            await self.build(UnitTypeId.ENGINEERINGBAY, near=cc.position.towards(self.game_info.map_center, 8))
+            await self.build(UnitTypeId.ENGINEERINGBAY, near=cc.position.towards(self.game_info.map_center, 8), placement_step=5)
 
     async def build_factory(self):
         ccs: Units = self.townhalls(UnitTypeId.COMMANDCENTER)
@@ -135,11 +134,11 @@ class MyBot(sc2.BotAI):
         else:
             cc: Unit = ccs.first
         if self.structures(UnitTypeId.BARRACKS) and not self.structures(UnitTypeId.FACTORY) and self.can_afford(UnitTypeId.FACTORY) and not self.already_pending(UnitTypeId.FACTORY):
-            workers: Units = self.workers.gathering
-            if workers:  # if workers were found
-                worker: Unit = workers.random
-                factory_position = await self.find_placement(UnitTypeId.FACTORY, near=cc.position.towards(self.game_info.map_center, 8))
-                self.do(worker.build(UnitTypeId.FACTORY, factory_position))
+            await self.build(
+                UnitTypeId.FACTORY,
+                near=cc.position.towards(self.game_info.map_center, 8),
+                placement_step=5
+            )
 
     async def build_starport(self):
         ccs: Units = self.townhalls(UnitTypeId.COMMANDCENTER)
@@ -147,8 +146,8 @@ class MyBot(sc2.BotAI):
             return
         else:
             cc: Unit = ccs.first
-        if self.structures(UnitTypeId.FACTORY) and self.structures(UnitTypeId.STARPORT).amount < 4 and self.can_afford(UnitTypeId.STARPORT) and not self.already_pending(UnitTypeId.FACTORY):
-            await self.build(UnitTypeId.STARPORT, near=cc.position.towards(self.game_info.map_center, 8))
+        if self.structures(UnitTypeId.FACTORY) and self.structures(UnitTypeId.STARPORT).amount < 2 and self.can_afford(UnitTypeId.STARPORT) and not self.already_pending(UnitTypeId.FACTORY):
+            await self.build(UnitTypeId.STARPORT, near=cc.position.towards(self.game_info.map_center, 8), placement_step=5)
 
     async def build_fusion_core(self):
         ccs: Units = self.townhalls(UnitTypeId.COMMANDCENTER)
@@ -158,7 +157,7 @@ class MyBot(sc2.BotAI):
             cc: Unit = ccs.first
         
         if self.structures(UnitTypeId.STARPORT) and not self.structures(UnitTypeId.FUSIONCORE) and self.can_afford(UnitTypeId.FUSIONCORE):
-            await self.build(UnitTypeId.FUSIONCORE, near=cc.position.towards(self.game_info.map_center, 8))
+            await self.build(UnitTypeId.FUSIONCORE, near=cc.position.towards(self.game_info.map_center, 8), placement_step=5)
 
     async def train_BC(self):
         for sp in self.structures(UnitTypeId.STARPORT).idle:
@@ -256,45 +255,12 @@ class MyBot(sc2.BotAI):
                     for s in self.units(UNIT).idle:
                         self.do(s.attack(random.choice(self.enemy_units)))
 
-    def random_location_variance(self, enemy_start_location):
-            x = enemy_start_location[0]
-            y = enemy_start_location[1]
-
-            x += ((random.randrange(-20, 20))/100) * enemy_start_location[0]
-            y += ((random.randrange(-20, 20))/100) * enemy_start_location[1]
-
-            if x < 0:
-                x = 0
-            if y < 0:
-                y = 0
-            if x > self.game_info.map_size[0]:
-                x = self.game_info.map_size[0]
-            if y > self.game_info.map_size[1]:
-                y = self.game_info.map_size[1]
-
-            go_to = position.Point2(position.Pointlike((x,y)))
-            return go_to
-
-    async def scout(self):
-        if len(self.units(REAPER)) > 0:
-            scout = self.units(REAPER)[0]
-            if scout.is_idle:
-                enemy_location = self.enemy_start_locations[0]
-                move_to = self.random_location_variance(enemy_location)
-                print(move_to)
-                await self.do(scout.move(move_to))
-
-        else:
-            for barrack in self.units(BARRACKS):
-                if self.can_afford(REAPER):
-                    print("treinando scout")
-                    self.train(UnitTypeId.REAPER, 1)
-        
+            
 def main():
     map = "AcropolisLE"
     sc2.run_game(
         sc2.maps.get(map),
-        [Bot(Race.Terran, MyBot()), Computer(Race.Protoss, Difficulty.Hard)],
+        [Bot(Race.Terran, MyBot()), Bot(Race.Terran, MyBot())],
         realtime=False,
     )
 
