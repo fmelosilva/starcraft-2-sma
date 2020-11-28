@@ -36,6 +36,10 @@ class MyBot(sc2.BotAI):
         await self.reactive_depot()
                 
     async def build_workers(self):
+        #print(f"numero de fabricas {self.structures(UnitTypeId.FACTORY)}")
+        print(f"numero de estaleiro sideral lista {self.structures(UnitTypeId.STARPORT)}")
+        print(f"numero de estaleiro sideral {len(self.structures(UnitTypeId.STARPORT))}")
+
         if len(self.townhalls(UnitTypeId.COMMANDCENTER))*16 > len(self.units(SCV)):
             if len(self.units(SCV)) < self.MAX_WORKERS:
                 for cc in self.townhalls(UnitTypeId.COMMANDCENTER):
@@ -47,23 +51,23 @@ class MyBot(sc2.BotAI):
         if not ccs:
             return
         else:
-            cc: Unit = ccs.random
+            cc: Unit = ccs.first
 
-        #if self.can_afford(UnitTypeId.SUPPLYDEPOT) and self.already_pending(UnitTypeId.SUPPLYDEPOT) == 0:
-            # depot_placement_positions = self.main_base_ramp.corner_depots | {self.main_base_ramp.depot_in_middle}
-            # depots: Units = self.structures.of_type({UnitTypeId.SUPPLYDEPOT, UnitTypeId.SUPPLYDEPOTLOWERED})
-            # if depots:
-            #     depot_placement_positions: Set[Point2] = {
-            #         d for d in depot_placement_positions if depots.closest_distance_to(d) > 1
-            #     }
-            # if len(depot_placement_positions) == 0:
-            #     return
-            # # Choose any depot location
-            # target_depot_location: Point2 = depot_placement_positions.pop()
-            # workers: Units = self.workers.gathering
-            # if workers:  # if workers were found
-            #     worker: Unit = workers.random
-            #     self.do(worker.build(UnitTypeId.SUPPLYDEPOT, target_depot_location))
+        if self.can_afford(UnitTypeId.SUPPLYDEPOT) and len(self.structures.of_type({UnitTypeId.SUPPLYDEPOT, UnitTypeId.SUPPLYDEPOTLOWERED})) < 3 and not self.already_pending(UnitTypeId.SUPPLYDEPOT):
+            depot_placement_positions = self.main_base_ramp.corner_depots | {self.main_base_ramp.depot_in_middle}
+            depots: Units = self.structures.of_type({UnitTypeId.SUPPLYDEPOT, UnitTypeId.SUPPLYDEPOTLOWERED})
+            if depots:
+                depot_placement_positions: Set[Point2] = {
+                    d for d in depot_placement_positions if depots.closest_distance_to(d) > 1
+                }
+                if len(depot_placement_positions) == 0:
+                    return
+                # Choose any depot location
+                target_depot_location: Point2 = depot_placement_positions.pop()
+                workers: Units = self.workers.gathering
+                if workers:  # if workers were found
+                    worker: Unit = workers.random
+                    self.do(worker.build(UnitTypeId.SUPPLYDEPOT, target_depot_location))
 
         if self.supply_left < 6 and self.supply_used >= 14 and not self.already_pending(UnitTypeId.SUPPLYDEPOT):
             if self.can_afford(UnitTypeId.SUPPLYDEPOT):
@@ -146,7 +150,7 @@ class MyBot(sc2.BotAI):
             return
         else:
             cc: Unit = ccs.first
-        if self.structures(UnitTypeId.FACTORY) and self.structures(UnitTypeId.STARPORT).amount < 2 and self.can_afford(UnitTypeId.STARPORT) and not self.already_pending(UnitTypeId.FACTORY):
+        if self.structures(UnitTypeId.FACTORY) and len(self.structures(UnitTypeId.STARPORT)) < 2 and self.can_afford(UnitTypeId.STARPORT) and not self.already_pending(UnitTypeId.STARPORT):
             await self.build(UnitTypeId.STARPORT, near=cc.position.towards(self.game_info.map_center, 8), placement_step=5)
 
     async def build_fusion_core(self):
@@ -156,7 +160,7 @@ class MyBot(sc2.BotAI):
         else:
             cc: Unit = ccs.first
         
-        if self.structures(UnitTypeId.STARPORT) and not self.structures(UnitTypeId.FUSIONCORE) and self.can_afford(UnitTypeId.FUSIONCORE):
+        if self.structures(UnitTypeId.STARPORT) and not self.structures(UnitTypeId.FUSIONCORE) and self.can_afford(UnitTypeId.FUSIONCORE) and not self.already_pending(UnitTypeId.FUSIONCORE):
             await self.build(UnitTypeId.FUSIONCORE, near=cc.position.towards(self.game_info.map_center, 8), placement_step=5)
 
     async def train_BC(self):
@@ -260,7 +264,7 @@ def main():
     map = "AcropolisLE"
     sc2.run_game(
         sc2.maps.get(map),
-        [Bot(Race.Terran, MyBot()), Bot(Race.Terran, MyBot())],
+        [Bot(Race.Terran, MyBot()), Computer(Race.Protoss, Difficulty.VeryHard)],
         realtime=False,
     )
 
