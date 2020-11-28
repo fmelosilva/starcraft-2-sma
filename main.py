@@ -7,9 +7,36 @@ from sc2.position import Point2, Point3
 from sc2.unit import Unit
 from sc2.units import Units
 
+from sc2.ids.upgrade_id import UpgradeId
+from sc2.ids.unit_typeid import UnitTypeId
+
 from typing import Tuple, List
+from task import Task
+from trigger_event import TriggerEvent
+from passive_event import PassiveEvent
+from event import Event
+from states import STATES
+
+upgrade_ids = [
+    UpgradeId.TERRANBUILDINGARMOR,
+    UpgradeId.TERRANINFANTRYWEAPONSLEVEL1,
+    UpgradeId.TERRANINFANTRYARMORSLEVEL1,
+    UpgradeId.TERRANINFANTRYARMORSLEVEL2,
+    UpgradeId.TERRANINFANTRYWEAPONSLEVEL2,
+    UpgradeId.TERRANINFANTRYARMORSLEVEL3,
+    UpgradeId.TERRANINFANTRYWEAPONSLEVEL3,
+]
 
 class MyBot(sc2.BotAI):
+    def __init__(self):
+        self.world = {  # Contains all the information available about the game world.
+            "locations": {},
+            "units": {},
+        }
+        self.global_queue = [] 
+        self.global_events = {}
+        self.start()
+
     async def on_step(self, iteration):
         await self.distribute_workers()
         await self.build_workers()
@@ -26,14 +53,31 @@ class MyBot(sc2.BotAI):
         await self.BC_attack()
         await self.expand()
         await self.reactive_depot()
-                
+        self.detect_changes()
+        self.exec_global_tasks()
+        self.exec_all_units_tasks()
+
+        barracks_placement_position = self.main_base_ramp.barracks_correct_placement
+        worker = self.select_build_worker(barracks_placement_position)
+
+        if (
+            worker
+            and (
+                await self.can_place(UnitTypeId.BARRACKS, [barracks_placement_position])
+            )[0]
+        ):
+            worker.build(UnitTypeId.BARRACKS, barracks_placement_position)
 
     async def build_workers(self):
         ccs: Units = self.townhalls(UnitTypeId.COMMANDCENTER)
         if not ccs:
             return
-        for cc in ccs: 
-            if self.can_afford(UnitTypeId.SCV) and self.workers.amount < 20 and cc.is_idle:
+        for cc in ccs:
+            if (
+                self.can_afford(UnitTypeId.SCV)
+                and self.workers.amount < 20
+                and cc.is_idle
+            ):
                 self.do(cc.train(UnitTypeId.SCV))
 
     async def build_depots(self):
@@ -43,12 +87,21 @@ class MyBot(sc2.BotAI):
         else:
             cc: Unit = ccs.first
 
-        if self.can_afford(UnitTypeId.SUPPLYDEPOT) and self.already_pending(UnitTypeId.SUPPLYDEPOT) == 0:
-            depot_placement_positions = self.main_base_ramp.corner_depots | {self.main_base_ramp.depot_in_middle}
-            depots: Units = self.structures.of_type({UnitTypeId.SUPPLYDEPOT, UnitTypeId.SUPPLYDEPOTLOWERED})
+        if (
+            self.can_afford(UnitTypeId.SUPPLYDEPOT)
+            and self.already_pending(UnitTypeId.SUPPLYDEPOT) == 0
+        ):
+            depot_placement_positions = self.main_base_ramp.corner_depots | {
+                self.main_base_ramp.depot_in_middle
+            }
+            depots: Units = self.structures.of_type(
+                {UnitTypeId.SUPPLYDEPOT, UnitTypeId.SUPPLYDEPOTLOWERED}
+            )
             if depots:
                 depot_placement_positions: Set[Point2] = {
-                    d for d in depot_placement_positions if depots.closest_distance_to(d) > 1
+                    d
+                    for d in depot_placement_positions
+                    if depots.closest_distance_to(d) > 1
                 }
             if len(depot_placement_positions) == 0:
                 return
@@ -59,10 +112,18 @@ class MyBot(sc2.BotAI):
                 worker: Unit = workers.random
                 self.do(worker.build(UnitTypeId.SUPPLYDEPOT, target_depot_location))
 
-        if self.supply_left < 6 and self.supply_used >= 14 and not self.already_pending(UnitTypeId.SUPPLYDEPOT):
+        if (
+            self.supply_left < 6
+            and self.supply_used >= 14
+            and not self.already_pending(UnitTypeId.SUPPLYDEPOT)
+        ):
             if self.can_afford(UnitTypeId.SUPPLYDEPOT):
-                await self.build(UnitTypeId.SUPPLYDEPOT, near=cc.position.towards(self.game_info.map_center, 8)) 
-    
+                await self.build(
+                    UnitTypeId.SUPPLYDEPOT,
+                    near=cc.position.towards(self.game_info.map_center, 8),
+                    placement_step=4
+                )
+
     async def build_refinary(self):
         ccs: Units = self.townhalls(UnitTypeId.COMMANDCENTER)
         if not ccs:
@@ -75,7 +136,7 @@ class MyBot(sc2.BotAI):
                 if self.gas_buildings.filter(lambda unit: unit.distance_to(vg) < 1):
                     break
                 worker: Unit = self.select_build_worker(vg.position)
-                if worker is None: 
+                if worker is None:
                     break
 
                 worker.build(UnitTypeId.REFINERY, vg)
@@ -92,26 +153,49 @@ class MyBot(sc2.BotAI):
             return
         else:
             cc: Unit = ccs.first
-        if not self.structures(UnitTypeId.BARRACKS) and self.can_afford(UnitTypeId.BARRACKS):
-            await self.build(UnitTypeId.BARRACKS, near=cc.position.towards(self.game_info.map_center, 8))
+        if not self.structures(UnitTypeId.BARRACKS) and self.can_afford(
+            UnitTypeId.BARRACKS
+        ):
+            await self.build(
+                UnitTypeId.BARRACKS,
+                near=cc.position.towards(self.game_info.map_center, 8),
+                placement_step=5
+            )
 
     async def build_base_army(self):
-        if self.structures(UnitTypeId.BARRACKS) and self.can_afford(UnitTypeId.MARINE) and self.supply_army < 30 and not self.already_pending(UnitTypeId.MARINE):
-            self.train(UnitTypeId.MARINE, 4, closest_to = self.game_info.map_center)
+        if (
+            self.structures(UnitTypeId.BARRACKS)
+            and self.can_afford(UnitTypeId.MARINE)
+            and self.supply_army < 30
+            and not self.already_pending(UnitTypeId.MARINE)
+        ):
+            self.train(UnitTypeId.MARINE, 4, closest_to=self.game_info.map_center)
 
     async def expand(self):
         if self.minerals < 1000 and self.vespene < 500:
             location = await self.get_next_expansion()
-            await self.build(UnitTypeId.COMMANDCENTER, near=location, max_distance=10, random_alternative=False, placement_step=1)
-                
+            await self.build(
+                UnitTypeId.COMMANDCENTER,
+                near=location,
+                max_distance=10,
+                random_alternative=False,
+                placement_step=5,
+            )
+
     async def build_engineering_bay(self):
         ccs: Units = self.townhalls(UnitTypeId.COMMANDCENTER)
         if not ccs:
             return
         else:
             cc: Unit = ccs.first
-        if self.can_afford(UnitTypeId.ENGINEERINGBAY) and not self.structures(UnitTypeId.ENGINEERINGBAY) :
-            await self.build(UnitTypeId.ENGINEERINGBAY, near=cc.position.towards(self.game_info.map_center, 8))
+        if self.can_afford(UnitTypeId.ENGINEERINGBAY) and not self.structures(
+            UnitTypeId.ENGINEERINGBAY
+        ):
+            await self.build(
+                UnitTypeId.ENGINEERINGBAY,
+                near=cc.position.towards(self.game_info.map_center, 8),
+                placement_step=5
+            )
 
     async def build_factory(self):
         ccs: Units = self.townhalls(UnitTypeId.COMMANDCENTER)
@@ -119,8 +203,16 @@ class MyBot(sc2.BotAI):
             return
         else:
             cc: Unit = ccs.first
-        if self.structures(UnitTypeId.BARRACKS) and not self.structures(UnitTypeId.FACTORY) and self.can_afford(UnitTypeId.FACTORY):
-            await self.build(UnitTypeId.FACTORY, near=cc.position.towards(self.game_info.map_center, 8))
+        if (
+            self.structures(UnitTypeId.BARRACKS)
+            and not self.structures(UnitTypeId.FACTORY)
+            and self.can_afford(UnitTypeId.FACTORY)
+        ):
+            await self.build(
+                UnitTypeId.FACTORY,
+                near=cc.position.towards(self.game_info.map_center, 8),
+                placement_step=5
+            )
 
     async def build_starport(self):
         ccs: Units = self.townhalls(UnitTypeId.COMMANDCENTER)
@@ -128,8 +220,16 @@ class MyBot(sc2.BotAI):
             return
         else:
             cc: Unit = ccs.first
-        if self.structures(UnitTypeId.FACTORY) and not self.structures(UnitTypeId.STARPORT) and self.can_afford(UnitTypeId.STARPORT):
-            await self.build(UnitTypeId.STARPORT, near=cc.position.towards(self.game_info.map_center, 8))
+        if (
+            self.structures(UnitTypeId.FACTORY)
+            and not self.structures(UnitTypeId.STARPORT)
+            and self.can_afford(UnitTypeId.STARPORT)
+        ):
+            await self.build(
+                UnitTypeId.STARPORT,
+                near=cc.position.towards(self.game_info.map_center, 8),
+                placement_step=5
+            )
 
     async def build_fusion_core(self):
         ccs: Units = self.townhalls(UnitTypeId.COMMANDCENTER)
@@ -137,26 +237,36 @@ class MyBot(sc2.BotAI):
             return
         else:
             cc: Unit = ccs.first
-        
-        if self.structures(UnitTypeId.STARPORT) and not self.structures(UnitTypeId.FUSIONCORE) and self.can_afford(UnitTypeId.FUSIONCORE):
-            await self.build(UnitTypeId.FUSIONCORE, near=cc.position.towards(self.game_info.map_center, 8))
+
+        if (
+            self.structures(UnitTypeId.STARPORT)
+            and not self.structures(UnitTypeId.FUSIONCORE)
+            and self.can_afford(UnitTypeId.FUSIONCORE)
+        ):
+            await self.build(
+                UnitTypeId.FUSIONCORE,
+                near=cc.position.towards(self.game_info.map_center, 8),
+                placement_step=5
+            )
 
     async def train_BC(self):
         for sp in self.structures(UnitTypeId.STARPORT).idle:
-                if sp.has_add_on:
-                    if not self.can_afford(UnitTypeId.BATTLECRUISER):
-                        break
-                    sp.train(UnitTypeId.BATTLECRUISER)
-        
-    async def starport_points_to_build_addon(self,sp_position: Point2) -> List[Point2]:
-            """ Return all points that need to be checked when trying to build an addon. Returns 4 points. """
-            addon_offset: Point2 = Point2((2.5, -0.5))
-            addon_position: Point2 = sp_position + addon_offset
-            addon_points = [
-                (addon_position + Point2((x - 0.5, y - 0.5))).rounded for x in range(0, 2) for y in range(0, 2)
-            ]
-            return addon_points
-    
+            if sp.has_add_on:
+                if not self.can_afford(UnitTypeId.BATTLECRUISER):
+                    break
+                sp.train(UnitTypeId.BATTLECRUISER)
+
+    async def starport_points_to_build_addon(self, sp_position: Point2) -> List[Point2]:
+        """ Return all points that need to be checked when trying to build an addon. Returns 4 points. """
+        addon_offset: Point2 = Point2((2.5, -0.5))
+        addon_position: Point2 = sp_position + addon_offset
+        addon_points = [
+            (addon_position + Point2((x - 0.5, y - 0.5))).rounded
+            for x in range(0, 2)
+            for y in range(0, 2)
+        ]
+        return addon_points
+
     async def build_starport_techlab(self):
         sp: Unit
         for sp in self.structures(UnitTypeId.STARPORT).ready.idle:
@@ -180,7 +290,16 @@ class MyBot(sc2.BotAI):
         if targets:
             return targets.random.position, True
 
-        if self.units and min([u.position.distance_to(self.enemy_start_locations[0]) for u in self.units]) < 5:
+        if (
+            self.units
+            and min(
+                [
+                    u.position.distance_to(self.enemy_start_locations[0])
+                    for u in self.units
+                ]
+            )
+            < 5
+        ):
             return self.enemy_start_locations[0].position, False
 
         return self.mineral_field.random.position, False
@@ -213,6 +332,145 @@ class MyBot(sc2.BotAI):
                     depo(AbilityId.MORPH_SUPPLYDEPOT_RAISE)
                     break
 
+    def add_unit_task(
+        self,
+        unit: Unit,
+        task: Task,
+        trigger_event: TriggerEvent,
+        priority: int = 0,
+        tag: str = "",
+    ):
+        self.world["units"][unit]["task_queue"].append(
+            {
+                "priority": priority,
+                "task": task,
+                "trigger_event": trigger_event,
+                "tag": tag,
+                "time": self.time,
+            }
+        )
+
+    def register_global_event(self, event: PassiveEvent):
+        if event.event_type in self.global_events.keys():
+            self.global_events[event.event_type].append(event)
+        else:
+            self.global_events[event.event_type] = [event]
+
+    def factory(self, func, *args):
+        return lambda bot: func(*args)
+
+ 
+
+    def start(self):
+        
+        # Add global event to add engineeringbay logic to new engineeringbay.
+        def engineeringbay_task_adder_logic(bot: MyBot, unit: Unit):
+            def engineeringbay_core_logic():
+                if (len(upgrade_ids) == 0):
+                    return
+
+                upgrade_id = upgrade_ids[0]
+                if self.research(upgrade_id):
+                    upgrade_ids.pop(0)
+
+            if unit.type_id == UnitTypeId.ENGINEERINGBAY:
+                def check(bot):
+                    current_unit = self.structures.by_tag(unit.tag)
+                    return current_unit.is_ready and self.minerals > 100 and self.vespene > 100
+
+                self.add_unit_task(
+                    unit,
+                    Task(step=bot.factory(engineeringbay_core_logic)),
+                    TriggerEvent(check,
+                        constant=True,
+                    ),
+                )
+
+        self.register_global_event(PassiveEvent(engineeringbay_task_adder_logic, Event.TYPES.NEW_UNIT, True))
+
+    def detect_changes(self):
+        # --- Check all units ---
+        # Extract the ids from the list of units and make them sets.
+        units_by_id = {unit.tag: unit for unit in self.units + self.structures}
+        units_ids = set(units_by_id.keys())
+        world_units_ids = set([unit.tag for unit in self.world["units"].keys()])  # TODO: Add caching to reduce workload.
+
+        # Calculate the difference and the intersection between the sets.
+        new_ids = units_ids.difference(world_units_ids)
+        removed_ids = world_units_ids.difference(units_ids)
+        comm_ids = units_ids.intersection(world_units_ids)
+
+        # Add the new unit.
+        for unit_id in new_ids:
+            self.world["units"][units_by_id[unit_id]] = {
+                "state": STATES.IDLE,
+                "task_queue": [],
+                "display_state": "",
+                "target_location": None,
+                "target_type": None
+            }
+            self.trigger_global_event(Event.TYPES.NEW_UNIT, units_by_id[unit_id])
+
+        # Remove the missing unit.
+        for unit_id in removed_ids:
+            # Trigger global event for removed unit and pop the unit from the registry.
+            # self.trigger_global_event(Event.TYPES.REMOVED_UNIT, self.world["units"].pop(units_by_id[unit_id]))  # TODO: Why does this crash?
+            pass
+
+        # Check if states are correct.
+        for unit_id in comm_ids:
+            # TODO: Add check for if the state is correct.
+            unit = units_by_id[unit_id]
+
+            # Check if workers are done building. # TODO: Think this is the root of a problem
+            """  
+            if self.get_unit_state(unit) == STATES.WORKER_BUILDING and unit.is_idle:
+                self.set_unit_state(unit, STATES.IDLE)
+            """
+        # --- Check all locations ---
+
+    def trigger_global_event(self, event_type, *args):
+        """
+        Used to trigger all events in the global event dictionary of a specified type.
+        :param event_type:
+        :param args:
+        :return:
+        """
+        if event_type in self.global_events.keys():
+            for event in self.global_events[event_type]:
+                event.trigger_event(self, *args)
+
+
+    def exec_global_tasks(self):
+        self.global_queue.sort(key=lambda i: i["priority"], reverse=True)
+
+        for i, item in enumerate(self.global_queue[:]):
+            if item["trigger_event"].should_trigger(self):
+                item["task"].on_step(self)
+                status = item["task"].get_status(self)
+                if (not item["trigger_event"].constant) or (status != Task.STATUS.RUNNING):
+                    self.global_queue.pop(self.global_queue.index(item))["task"].on_end(self, status)
+
+
+    def exec_all_units_tasks(self):
+        for unit in self.units + self.structures:
+            if self.world["units"][unit]["task_queue"]:
+                item = self.world["units"][unit]["task_queue"][0]
+                self.world["units"][unit]["task_queue"].sort(
+                    key=lambda i: i["priority"], reverse=True
+                )
+
+                if item["trigger_event"].should_trigger(self):
+                    item["task"].on_step(self)
+                    status = item["task"].get_status(self)
+                    if (not item["trigger_event"].constant) or (
+                        status != Task.STATUS.RUNNING
+                    ):
+                        self.world["units"][unit]["task_queue"].pop(0)["task"].on_end(
+                            self, status
+                        )
+
+
 def main():
     map = "AcropolisLE"
     sc2.run_game(
@@ -220,6 +478,7 @@ def main():
         [Bot(Race.Terran, MyBot()), Computer(Race.Zerg, Difficulty.Easy)],
         realtime=False,
     )
+
 
 if __name__ == "__main__":
     main()
