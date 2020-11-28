@@ -18,6 +18,8 @@ from passive_event import PassiveEvent
 from event import Event
 from states import STATES
 
+MAX_SCV_REPAIRING_PERCENTAGE = 0.2
+
 upgrade_ids = [
     UpgradeId.TERRANBUILDINGARMOR,
     UpgradeId.TERRANINFANTRYWEAPONSLEVEL1,
@@ -61,7 +63,7 @@ class MyBot(sc2.BotAI):
         self.detect_changes()
         self.exec_global_tasks()
         self.exec_all_units_tasks()
-
+        
         barracks_placement_position = self.main_base_ramp.barracks_correct_placement
         worker = self.select_build_worker(barracks_placement_position)
 
@@ -75,11 +77,7 @@ class MyBot(sc2.BotAI):
 
                 
     async def build_workers(self):
-        #print(f"numero de fabricas {self.structures(UnitTypeId.FACTORY)}")
-        print(f"numero de estaleiro sideral lista {self.structures(UnitTypeId.STARPORT)}")
-        print(f"numero de estaleiro sideral {len(self.structures(UnitTypeId.STARPORT))}")
-
-        if len(self.townhalls(UnitTypeId.COMMANDCENTER))*16 > len(self.units(SCV)):
+        if len(self.townhalls(UnitTypeId.COMMANDCENTER))*16 > len(self.units(UnitTypeId.SCV)):
             if len(self.units(UnitTypeId.SCV)) < self.MAX_WORKERS:
                 for cc in self.townhalls(UnitTypeId.COMMANDCENTER):
                     if self.can_afford(UnitTypeId.SCV) and cc.is_idle:
@@ -174,7 +172,7 @@ class MyBot(sc2.BotAI):
         else:
             cc: Unit = ccs.first
         if self.can_afford(UnitTypeId.ENGINEERINGBAY) and not self.structures(UnitTypeId.ENGINEERINGBAY) :
-            await self.build(UnitTypeId.ENGINEERINGBAY, near=cc.position.towards(self.game_info.map_center, 8), placement_step=5)
+            await self.build(UnitTypeId.ENGINEERINGBAY, near=cc.position.towards(self.game_info.map_center, 8))
 
     async def build_factory(self):
         ccs: Units = self.townhalls(UnitTypeId.COMMANDCENTER)
@@ -333,17 +331,14 @@ class MyBot(sc2.BotAI):
                     upgrade_ids.pop(0)
 
             if unit.type_id == UnitTypeId.ENGINEERINGBAY:
-                def check(bot):
-                    current_unit = self.structures.by_tag(unit.tag)
-                    return current_unit.is_ready and self.minerals > 100 and self.vespene > 100
-
                 self.add_unit_task(
                     unit,
                     Task(step=bot.factory(engineeringbay_core_logic)),
-                    TriggerEvent(check,
+                    TriggerEvent(lambda bot: self.structures.by_tag(unit.tag) and self.minerals > 100 and self.vespene > 100,
                         constant=True,
                     ),
                 )
+        
 
         self.register_global_event(PassiveEvent(engineeringbay_task_adder_logic, Event.TYPES.NEW_UNIT, True))
 
@@ -454,7 +449,25 @@ class MyBot(sc2.BotAI):
                     for s in self.units(UNIT).idle:
                         self.do(s.attack(random.choice(self.enemy_units)))
 
-            
+    async def on_unit_took_damage(self, unit: Unit, amount_damage_taken):
+        scvs = self.units(UnitTypeId.SCV)
+        if len(scvs) == 0 or not unit.is_structure:
+            return 
+
+        scvs_repairing = scvs.filter(lambda unit: unit.is_repairing)
+        scvs_not_repairing = scvs.filter(lambda unit: not unit.is_repairing)
+
+        repairing_percentage = len(scvs_repairing) / len(scvs)
+        if repairing_percentage >= MAX_SCV_REPAIRING_PERCENTAGE:
+            return
+
+        print(len(scvs_repairing) / len(scvs))
+
+        if len(scvs_not_repairing) == 0:
+            return
+
+        scvs_not_repairing[0].repair(unit, queue=True)
+
 def main():
     map = "AcropolisLE"
     sc2.run_game(
