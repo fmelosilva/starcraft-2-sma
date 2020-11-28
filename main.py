@@ -75,11 +75,7 @@ class MyBot(sc2.BotAI):
 
                 
     async def build_workers(self):
-        #print(f"numero de fabricas {self.structures(UnitTypeId.FACTORY)}")
-        print(f"numero de estaleiro sideral lista {self.structures(UnitTypeId.STARPORT)}")
-        print(f"numero de estaleiro sideral {len(self.structures(UnitTypeId.STARPORT))}")
-
-        if len(self.townhalls(UnitTypeId.COMMANDCENTER))*16 > len(self.units(SCV)):
+        if len(self.townhalls(UnitTypeId.COMMANDCENTER))*16 > len(self.units(UnitTypeId.SCV)):
             if len(self.units(UnitTypeId.SCV)) < self.MAX_WORKERS:
                 for cc in self.townhalls(UnitTypeId.COMMANDCENTER):
                     if self.can_afford(UnitTypeId.SCV) and cc.is_idle:
@@ -148,7 +144,7 @@ class MyBot(sc2.BotAI):
             return
         else:
             cc: Unit = ccs.first
-        if not self.structures(UnitTypeId.BARRACKS) and self.can_afford(UnitTypeId.BARRACKS):
+        if not self.structures(UnitTypeId.BARRACKS) and self.can_afford(UnitTypeId.BARRACKS) and self.already_pending(UnitTypeId.BARRACKS):
             await self.build(UnitTypeId.BARRACKS, near=cc.position.towards(self.game_info.map_center, 8), placement_step=5)
 
     async def build_base_army(self):
@@ -173,8 +169,8 @@ class MyBot(sc2.BotAI):
             return
         else:
             cc: Unit = ccs.first
-        if self.can_afford(UnitTypeId.ENGINEERINGBAY) and not self.structures(UnitTypeId.ENGINEERINGBAY) :
-            await self.build(UnitTypeId.ENGINEERINGBAY, near=cc.position.towards(self.game_info.map_center, 8), placement_step=5)
+        if self.can_afford(UnitTypeId.ENGINEERINGBAY) and not self.structures(UnitTypeId.ENGINEERINGBAY) and not self.already_pending(UnitTypeId.ENGINEERINGBAY):
+            await self.build(UnitTypeId.ENGINEERINGBAY, near=cc.position.towards(self.game_info.map_center, 8))
 
     async def build_factory(self):
         ccs: Units = self.townhalls(UnitTypeId.COMMANDCENTER)
@@ -195,7 +191,7 @@ class MyBot(sc2.BotAI):
             return
         else:
             cc: Unit = ccs.first
-        if self.structures(UnitTypeId.FACTORY) and len(self.structures(UnitTypeId.STARPORT)) < 2 and self.can_afford(UnitTypeId.STARPORT) and not self.already_pending(UnitTypeId.STARPORT):
+        if self.structures(UnitTypeId.FACTORY) and len(self.structures(UnitTypeId.STARPORT)) < 4 and self.can_afford(UnitTypeId.STARPORT) and not self.already_pending(UnitTypeId.STARPORT):
             await self.build(UnitTypeId.STARPORT, near=cc.position.towards(self.game_info.map_center, 8), placement_step=5)
 
     async def build_fusion_core(self):
