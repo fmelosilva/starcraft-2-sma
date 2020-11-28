@@ -58,6 +58,9 @@ class MyBot(sc2.BotAI):
         await self.army_atack()
         await self.expand()
         await self.reactive_depot()
+        await self.build_tech_lab_barrack()
+        await self.build_tech_lab_factory()
+
         self.detect_changes()
         self.exec_global_tasks()
         self.exec_all_units_tasks()
@@ -144,17 +147,24 @@ class MyBot(sc2.BotAI):
             return
         else:
             cc: Unit = ccs.first
-        if not self.structures(UnitTypeId.BARRACKS) and self.can_afford(UnitTypeId.BARRACKS) and self.already_pending(UnitTypeId.BARRACKS):
-            await self.build(UnitTypeId.BARRACKS, near=cc.position.towards(self.game_info.map_center, 8), placement_step=5)
+        if not self.structures(UnitTypeId.BARRACKS) and self.can_afford(UnitTypeId.BARRACKS) and not self.already_pending(UnitTypeId.BARRACKS):
+            await self.build(UnitTypeId.BARRACKS, near=cc.position.towards(self.game_info.map_center, 8), placement_step=6)
 
     async def build_base_army(self):
         for barrack in self.structures(UnitTypeId.BARRACKS):
-            if  self.can_afford(UnitTypeId.MARINE) and self.supply_army < 10 and not self.already_pending(UnitTypeId.MARINE) and barrack.is_idle:
+            if  self.can_afford(UnitTypeId.MARINE) and self.supply_army < 8 and not self.already_pending(UnitTypeId.MARINE) and barrack.is_idle:
                 self.train(UnitTypeId.MARINE, 1)
+
+            elif self.can_afford(UnitTypeId.MARAUDER) and self.supply_army < 15 and not self.already_pending(UnitTypeId.MARAUDER) and barrack.is_idle and barrack.has_add_on:
+                self.train(UnitTypeId.MARAUDER, 1)
+
         for factory in self.structures(UnitTypeId.FACTORY):
-            if  self.can_afford(UnitTypeId.HELLION) and self.supply_army < 20 and not self.already_pending(UnitTypeId.HELLION):
+            if  self.can_afford(UnitTypeId.HELLION) and self.supply_army < 12 and not self.already_pending(UnitTypeId.HELLION):
                 self.train(UnitTypeId.HELLION, 1)
 
+            elif self.can_afford(UnitTypeId.SIEGETANK) and self.supply_army < 15 and not self.already_pending(UnitTypeId.SIEGETANK) and factory.has_add_on:
+                self.train(UnitTypeId.SIEGETANK, 1)
+            
     async def expand(self):
         if self.townhalls(UnitTypeId.COMMANDCENTER).amount < (self.iteration/self.ITERATIONS_PER_MINUTE)/5 and self.can_afford(UnitTypeId.COMMANDCENTER):
             location = await self.get_next_expansion()
@@ -191,7 +201,7 @@ class MyBot(sc2.BotAI):
             return
         else:
             cc: Unit = ccs.first
-        if self.structures(UnitTypeId.FACTORY) and len(self.structures(UnitTypeId.STARPORT)) < 4 and self.can_afford(UnitTypeId.STARPORT) and not self.already_pending(UnitTypeId.STARPORT):
+        if self.structures(UnitTypeId.FACTORY) and len(self.structures(UnitTypeId.STARPORT)) < 2 and self.can_afford(UnitTypeId.STARPORT) and not self.already_pending(UnitTypeId.STARPORT):
             await self.build(UnitTypeId.STARPORT, near=cc.position.towards(self.game_info.map_center, 8), placement_step=5)
 
     async def build_fusion_core(self):
@@ -206,7 +216,7 @@ class MyBot(sc2.BotAI):
 
     async def train_BC(self):
         for sp in self.structures(UnitTypeId.STARPORT).idle:
-            if sp.has_add_on:
+            if sp.has_add_on and len(self.units(UnitTypeId.BATTLECRUISER)) < 8:
                 if not self.can_afford(UnitTypeId.BATTLECRUISER):
                     break
                 sp.train(UnitTypeId.BATTLECRUISER)
@@ -238,26 +248,24 @@ class MyBot(sc2.BotAI):
     async def select_target(self) -> Tuple[Point2, bool]:
         """ Select an enemy target the units should attack. """
         targets: Units = self.enemy_structures
-        if targets:
+        if targets and len(self.units(UnitTypeId.BATTLECRUISER)) > 5 :
             return targets.random.position, True
 
         targets: Units = self.enemy_units
         if targets:
             return targets.random.position, True
 
-        if (
-            self.units
-            and min(
-                [
-                    u.position.distance_to(self.enemy_start_locations[0])
-                    for u in self.units
-                ]
-            )
-            < 5
-        ):
+        if ( self.units and min([u.position.distance_to(self.enemy_start_locations[0])for u in self.units]) < 5) :
             return self.enemy_start_locations[0].position, False
 
-        return self.mineral_field.random.position, False
+        #retornar a posição de um cc randomico 
+        ccs: Units = self.townhalls(UnitTypeId.COMMANDCENTER)
+        if not ccs:
+            return
+        else:
+            cc: Unit = ccs.random
+
+        return cc.position, False
 
     async def BC_attack(self):
         bcs: Units = self.units(UnitTypeId.BATTLECRUISER)
@@ -437,11 +445,13 @@ class MyBot(sc2.BotAI):
             self.enemy_start_locations[0]
 
     async def army_atack(self):
-        aggressive_units = {UnitTypeId.MARINE: [50, 5],
-                            UnitTypeId.HELLION: [50, 3]}
+        aggressive_units = {UnitTypeId.MARINE: [8, 3],
+                            UnitTypeId.HELLION: [8, 3],
+                            UnitTypeId.MARAUDER: [8,3],
+                            UnitTypeId.SIEGETANK: [8,3]}
 
         for UNIT in aggressive_units:
-            if self.units(UNIT).amount > aggressive_units[UNIT][0] and self.units(UNIT).amount > aggressive_units[UNIT][1]:
+            if self.units(UNIT).amount > aggressive_units[UNIT][0] and self.units(UNIT).amount > aggressive_units[UNIT][1] and self.units(UNIT).amount > aggressive_units[UNIT][2] and self.units(UNIT).amount > aggressive_units[UNIT][3]:
                 for s in self.units(UNIT).idle:
                     self.do(s.attack(self.select_army_target(self.state)))
 
@@ -450,12 +460,35 @@ class MyBot(sc2.BotAI):
                     for s in self.units(UNIT).idle:
                         self.do(s.attack(random.choice(self.enemy_units)))
 
+    async def build_tech_lab_barrack(self):
+        for barrack in self.structures(UnitTypeId.BARRACKS).ready.idle:
+            if not barrack.has_add_on and self.can_afford(UnitTypeId.BARRACKSTECHLAB):
+                addon_points = await self.starport_points_to_build_addon(barrack.position)
+                if all(
+                    self.in_map_bounds(addon_point)
+                    and self.in_placement_grid(addon_point)
+                    and self.in_pathing_grid(addon_point)
+                    for addon_point in addon_points
+                ):
+                    barrack.build(UnitTypeId.BARRACKSTECHLAB)
+
+    async def build_tech_lab_factory(self):
+        for factory in self.structures(UnitTypeId.FACTORY).ready.idle:
+            if not factory.has_add_on and self.can_afford(UnitTypeId.FACTORYTECHLAB):
+                addon_points = await self.starport_points_to_build_addon(factory.position)
+                if all(
+                    self.in_map_bounds(addon_point)
+                    and self.in_placement_grid(addon_point)
+                    and self.in_pathing_grid(addon_point)
+                    for addon_point in addon_points
+                ):
+                    factory.build(UnitTypeId.FACTORYTECHLAB)
             
 def main():
     map = "AcropolisLE"
     sc2.run_game(
         sc2.maps.get(map),
-        [Bot(Race.Terran, MyBot()), Computer(Race.Protoss, Difficulty.VeryHard)],
+        [Bot(Race.Terran, MyBot()), Computer(Race.Protoss, Difficulty.Easy)],
         realtime=False,
     )
 
